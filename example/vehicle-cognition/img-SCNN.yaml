@@ -1,0 +1,117 @@
+globals:
+  max_spike_time: &max_spike_time 100
+
+neuron_params: &neuron_params
+  neuron_cls: snn_simulator.neuron.lif.RCLIF
+  neuron_params:
+    volt_threshold: 2
+    volt_reset: 0.0
+    tau: 1.0e-7
+    R1: 10.e+3
+    Rh: 20.e+3
+    Rl: 100.0
+    C: 1.0e-9
+    surrogate_function: snn_simulator.surrogate.neuron_surrogate.MyHeaviside
+
+conv_params: &conv_params
+  surrogate_cls: snn_simulator.surrogate.layer_surrogate.TemConvSurrogate
+  surrogate_params:
+    max_spike_time: *max_spike_time
+    kernel_size: 3
+    padding: 1
+    stride: 1
+    bias: null
+
+pool_params: &pool_params
+  kernel_size: 2
+  stride: 2
+  padding: 0
+  max_spike_time: *max_spike_time
+
+linear_params: &linear_params
+  surrogate_cls: snn_simulator.surrogate.layer_surrogate.S4NNSurrogate
+  surrogate_params:
+    max_spike_time: *max_spike_time
+
+common:
+  save_root: ./log
+  epochs: 100
+  device: cuda
+  optimizer:
+    type: torch.optim.Adam
+    lr: 0.001
+#    weight_decay: 1.0e-6
+  scheduler:
+  criterion:
+#    type: snn_simulator.loss.temporal_loss.TTFSCrossEntropyLoss
+#    params:
+    type: snn_simulator.loss.temporal_loss.S4NNLoss
+    params:
+      max_spike_time: *max_spike_time
+      delay_timestep: 3
+  acc_computer: snn_simulator.utils.loss_utils.ttfs_acc_count
+
+model:
+  load_path:
+  type: snn_simulator.models.net.FlexibleTimeStepNet
+  model_params:
+    layer_configs:
+#     [B,3,28,28]
+      - type: snn_simulator.models.neuron_layer.TemConvNeuronLayer
+        args:
+          <<: *neuron_params
+          <<: *conv_params
+          channel_in: 3
+          channel_out: 32
+
+      - type: snn_simulator.models.function_layer.AverTTFSPool2d
+        args:
+          <<: *pool_params
+      # [B,32,14,14]
+      - type: snn_simulator.models.neuron_layer.TemConvNeuronLayer
+        args:
+          <<: *neuron_params
+          <<: *conv_params
+          channel_in: 32
+          channel_out: 64
+      - type: snn_simulator.models.function_layer.AverTTFSPool2d
+        args:
+          <<: *pool_params
+      # [B,64,7,7]
+      - type: snn_simulator.models.function_layer.Flatten
+        args: null
+      # [B,64*7*7]
+      - type: snn_simulator.models.neuron_layer.TemNeuronLayer
+        args:
+          <<: *neuron_params
+          <<: *linear_params
+          input_size: 3136
+          output_size: 500
+          init_weight_upper: 0.05
+      - type: snn_simulator.models.neuron_layer.TemNeuronLayer
+        args:
+          <<: *neuron_params
+          <<: *linear_params
+          input_size: 500
+          output_size: 3
+          init_weight_upper: 0.05
+      - type: snn_simulator.models.function_layer.SpikeToTimeLayer
+        args: null
+
+
+dataset:
+  encoder_cls: snn_simulator.dataset.encoder.S4NNImageEncoder
+  encoder_params:
+    max_spike_time: *max_spike_time
+
+dataloader:
+  num_classes: 3
+  max_spike_time: *max_spike_time
+  batch_size: 8
+  train_shuffle: True
+  test_shuffle: True
+  val_shuffle: False
+  num_workers: 8
+  train_size: 0.7
+  test_size: 0.3
+
